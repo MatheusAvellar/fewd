@@ -21,7 +21,6 @@ namespace fewd {
       // - Check extension of original file; e.g. .mp4 to .jpg would throw
       // | - Having a (to, from) dict of possible file conversions would be nice
       // - Fix awful .Net JPEG encoder quality
-      // - Replace Windows XP Rover with something that doesn't infringe copyright
       InitializeComponent();
     }
 
