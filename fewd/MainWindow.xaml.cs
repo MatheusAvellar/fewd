@@ -1,16 +1,11 @@
 ﻿using System;
 using System.IO;
 using System.Windows;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Globalization;
-using System.Linq;
 using System.Windows.Input;
+using System.Threading;
 
 namespace fewd {
-  /// <summary>
-  /// Interaction logic for MainWindow.xaml
-  /// </summary>
   public partial class MainWindow : Window {
 
     FileSystemWatcher watcher = null;
@@ -20,7 +15,8 @@ namespace fewd {
       // - Fix hacked "Open folder" UI
       // - Check extension of original file; e.g. .mp4 to .jpg would throw
       // | - Having a (to, from) dict of possible file conversions would be nice
-      // - Fix awful .Net JPEG encoder quality
+      // - Add ffmpeg conversions (i.e. video, gifs?)
+      // - Gifski maybe?
       InitializeComponent();
     }
 
@@ -30,8 +26,8 @@ namespace fewd {
         Dispose();
 
       // Create a "Save As" dialog for selecting a directory (HACK)
-      // [Ref] https://stackoverflow.com/a/50261897/4824627
-      // [Ref] https://github.com/dotnet/wpf/issues/438
+      // [Ref] stackoverflow.com/a/50261897/4824627
+      // [Ref] github.com/dotnet/wpf/issues/438
       var dialog = new Microsoft.Win32.SaveFileDialog {
         Title = "Select a Directory", // instead of default "Save As"
         Filter = "Directory|*.this.directory", // Prevents displaying files
@@ -62,57 +58,67 @@ namespace fewd {
     }
 
     private void OnChanged(object source, RenamedEventArgs e) {
-      Console.WriteLine("[" + e.OldName + "] to [" + e.Name + "]");
+      Console.WriteLine($"[{e.OldName}] to [{e.Name}]");
 
       // Prevent self-triggering event
       if(e.Name.EndsWith(".tmp", true, CultureInfo.CurrentUICulture)
-      || e.Name.Equals("File Extension Watchdog")
-      || e.OldName.Equals("File Extension Watchdog")) {
+      || e.Name.Contains("File Extension Watchdog")
+      || e.OldName.Contains("File Extension Watchdog")) {
         return;
       }
 
-      // Get Image from file
-      Image original = Image.FromFile(e.FullPath);
       // Get file path, replacing filename with temp name
       // TODO: Might be a good idea to add a random number at the end
       string tmp_file_path = e.FullPath.Replace(e.Name, "File Extension Watchdog");
+
       // Get filename extension (e.g. "png")
-      string[] str = e.Name.Split('.');
-      string ext = str[str.Length - 1];
-      switch(ext) {
+      string from_ext = GetFileExtension(e.OldName);
+      string to_ext = GetFileExtension(e.Name);
+
+      switch(to_ext) {
         case "jpg":
         case "jpeg":
-          Console.WriteLine("Converting file to JPEG");
-          // Save JPG with """100%""" quality
-          object[] enc = GetJpegEncoderByQuality(100L);
-          original.Save(tmp_file_path, (ImageCodecInfo)enc[0], (EncoderParameters)enc[1]);
-          break;
         case "png":
-          Console.WriteLine("Converting file to PNG");
-          original.Save(tmp_file_path, ImageFormat.Png);
+        case "bmp":
+          Console.WriteLine($"Converting file to {to_ext.ToUpper()}");
+
+          string imagemagick_ready_tmp_path = $"\"{tmp_file_path}.{to_ext}\"";
+          FEWDConverter.ConvertImage(e.FullPath, imagemagick_ready_tmp_path);
+          // Replace original file with new, converted file
+          Console.WriteLine($"Attempting to move '{tmp_file_path}.{to_ext}' to '{e.FullPath}'");
+          // Check for if we fail to replace file
+          bool moved = false;
+          int tries = 0;
+          while(!moved) {
+            // Attempt to replace file
+            try {
+              File.Replace($"{tmp_file_path}.{to_ext}", e.FullPath, null);
+              moved = true;
+            } catch(IOException) {
+              tries++;
+              Console.WriteLine($"Failed to move ({tries}) times");
+              // If we fail, then try again 1 second later
+              Thread.Sleep(1000);
+            }
+          }
           break;
         default:
-          Console.WriteLine("Extension '" + ext + "' not supported");
-          original.Dispose();
+          Console.WriteLine($"Extension '{to_ext}' not supported");
           return;
       }
-      Console.WriteLine("Converted file saved as `File Extension Watchdog`");
-
-      original.Dispose();
-      File.Replace(tmp_file_path, e.FullPath, null);
-      Console.WriteLine("Replaced original renamed file! Done!");
+      Console.WriteLine("Successfully converted file!");
     }
 
-    private object[] GetJpegEncoderByQuality(long quality) {
-      // [Ref] https://stackoverflow.com/a/29211993/4824627
-      var encoder = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-      var encParams = new EncoderParameters() {
-        Param = new[] { new EncoderParameter(Encoder.Quality, quality) }
-      };
-      return new object[] { encoder, encParams };
+    private string GetFileExtension(string str) {
+      string[] arr = str.Split('.');
+      if(arr.Length > 1) {
+        return arr[arr.Length - 1];
+      }
+      Console.WriteLine($"[!] File without extension ({str})");
+      return "";
     }
 
-    // [Ref] https://stackoverflow.com/q/15017506/4824627
+    // [Ref] stackoverflow.com/q/15017506/4824627
     public void Dispose() {
       watcher.Renamed -= OnChanged;
       watcher.Dispose();
